@@ -18,12 +18,15 @@ package lestrratGoJwx
 
 import (
 	"encoding/json"
-	"github.com/lestrrat-go/jwx/jwk"
-	"github.com/lestrrat-go/jwx/jws"
-	"github.com/okta/okta-jwt-verifier-golang/adaptors"
-	"github.com/patrickmn/go-cache"
 	"sync"
 	"time"
+
+	jwa "github.com/lestrrat-go/jwx/jwa"
+	"github.com/lestrrat-go/jwx/jwk"
+	jws "github.com/lestrrat-go/jwx/jws"
+	"github.com/luis-silva/azure-jwt-verifier-golang/adaptors"
+	"github.com/patrickmn/go-cache"
+	"github.com/pkg/errors"
 )
 
 var jwkSetCache *cache.Cache = cache.New(5*time.Minute, 10*time.Minute)
@@ -67,7 +70,7 @@ func (lgj LestrratGoJwx) Decode(jwt string, jwkUri string) (interface{}, error) 
 		return nil, err
 	}
 
-	token, err := jws.VerifyWithJWKSet([]byte(jwt), jwkSet, nil)
+	token, err := VerifyWithJWKSet([]byte(jwt), jwkSet, nil)
 
 	if err != nil {
 		return nil, err
@@ -79,4 +82,44 @@ func (lgj LestrratGoJwx) Decode(jwt string, jwkUri string) (interface{}, error) 
 
 	return claims, nil
 
+}
+
+func VerifyWithJWKSet(buf []byte, keyset *jwk.Set, keyaccept jws.JWKAcceptFunc) (payload []byte, err error) {
+
+	if keyaccept == nil {
+		keyaccept = jws.DefaultJWKAcceptor
+	}
+
+	for _, key := range keyset.Keys {
+		if !keyaccept(key) {
+			continue
+		}
+
+		payload, err := VerifyWithJWK(buf, key)
+		if err == nil {
+			return payload, nil
+		}
+	}
+
+	return nil, errors.Wrap(err, "failed to verify with any of the keys")
+}
+
+func VerifyWithJWK(buf []byte, key jwk.Key) (payload []byte, err error) {
+
+	keyval, err := key.Materialize()
+	if err != nil {
+		return nil, errors.Wrap(err, `failed to materialize jwk.Key`)
+	}
+
+	alg := key.Algorithm()
+	if alg == "" && key.KeyType().String() == "RSA" {
+		alg = "RS256"
+	}
+
+	payload, err = jws.Verify(buf, jwa.SignatureAlgorithm(alg), keyval)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to verify message")
+	}
+
+	return payload, nil
 }

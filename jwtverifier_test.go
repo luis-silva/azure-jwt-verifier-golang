@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/okta/okta-jwt-verifier-golang/adaptors/lestrratGoJwx"
-	"github.com/okta/okta-jwt-verifier-golang/discovery/oidc"
-	"github.com/okta/okta-jwt-verifier-golang/utils"
+	"github.com/luis-silva/azure-jwt-verifier-golang/adaptors/lestrratGoJwx"
+	"github.com/luis-silva/azure-jwt-verifier-golang/discovery/oidc"
+	"github.com/luis-silva/azure-jwt-verifier-golang/utils"
 )
 
 func Test_the_verifier_defaults_to_oidc_if_nothing_is_provided_for_discovery(t *testing.T) {

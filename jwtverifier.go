@@ -20,21 +20,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/okta/okta-jwt-verifier-golang/adaptors"
-	"github.com/okta/okta-jwt-verifier-golang/adaptors/lestrratGoJwx"
-	"github.com/okta/okta-jwt-verifier-golang/discovery"
-	"github.com/okta/okta-jwt-verifier-golang/discovery/oidc"
-	"github.com/okta/okta-jwt-verifier-golang/errors"
-	"github.com/patrickmn/go-cache"
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
-)
 
-var metaDataCache *cache.Cache = cache.New(5*time.Minute, 10*time.Minute)
-var metaDataMu = &sync.Mutex{}
+	"github.com/luis-silva/azure-jwt-verifier-golang/adaptors"
+	"github.com/luis-silva/azure-jwt-verifier-golang/adaptors/lestrratGoJwx"
+	"github.com/luis-silva/azure-jwt-verifier-golang/discovery"
+	"github.com/luis-silva/azure-jwt-verifier-golang/discovery/oidc"
+	"github.com/luis-silva/azure-jwt-verifier-golang/errors"
+)
 
 type JwtVerifier struct {
 	Issuer string
@@ -102,7 +98,7 @@ func (j *JwtVerifier) VerifyAccessToken(jwt string) (*Jwt, error) {
 		return &myJwt, fmt.Errorf("the `Audience` was not able to be validated. %s", err.Error())
 	}
 
-	err = j.validateClientId(token["cid"])
+	err = j.validateClientId(token["appid"])
 	if err != nil {
 		return &myJwt, fmt.Errorf("the `Client Id` was not able to be validated. %s", err.Error())
 	}
@@ -127,7 +123,6 @@ func (j *JwtVerifier) decodeJwt(jwt string) (interface{}, error) {
 	}
 
 	resp, err := j.Adaptor.Decode(jwt, metaData["jwks_uri"].(string))
-
 	if err != nil {
 		return nil, fmt.Errorf("could not decode token: %s", err.Error())
 	}
@@ -203,9 +198,8 @@ func (j *JwtVerifier) validateAudience(audience interface{}) error {
 }
 
 func (j *JwtVerifier) validateClientId(clientId interface{}) error {
-	// Client Id can be optional, it will be validated if it is present in the ClaimsToValidate array
-	if cid, exists := j.ClaimsToValidate["cid"]; exists && clientId != cid {
-		return fmt.Errorf("clientId: %s does not match %s", clientId, cid)
+	if clientId != j.ClaimsToValidate["appid"] {
+		return fmt.Errorf("clientId: %s does not match %s", clientId, j.ClaimsToValidate["appid"])
 	}
 	return nil
 }
@@ -234,13 +228,6 @@ func (j *JwtVerifier) validateIss(issuer interface{}) error {
 func (j *JwtVerifier) getMetaData() (map[string]interface{}, error) {
 	metaDataUrl := j.Issuer + j.Discovery.GetWellKnownUrl()
 
-	metaDataMu.Lock()
-	defer metaDataMu.Unlock()
-
-	if x, found := metaDataCache.Get(metaDataUrl); found {
-		return x.(map[string]interface{}), nil
-	}
-
 	resp, err := http.Get(metaDataUrl)
 
 	if err != nil {
@@ -251,8 +238,6 @@ func (j *JwtVerifier) getMetaData() (map[string]interface{}, error) {
 
 	md := make(map[string]interface{})
 	json.NewDecoder(resp.Body).Decode(&md)
-
-	metaDataCache.SetDefault(metaDataUrl, md)
 
 	return md, nil
 }
@@ -283,18 +268,20 @@ func (j *JwtVerifier) isValidJwt(jwt string) (bool, error) {
 		return false, fmt.Errorf("the tokens header is not a json object")
 	}
 
-	if len(jsonObject) < 2 {
+	if len(jsonObject) < 3 {
 		return false, fmt.Errorf("the tokens header does not contain enough properties. " +
-			"Should contain `alg` and `kid`")
+			"Should contain at least `alg`, `kid` and `typ`")
 	}
 
-	if len(jsonObject) > 2 {
+	// We ignore x5t but it may be present
+	if len(jsonObject) > 4 {
 		return false, fmt.Errorf("the tokens header contains too many properties. " +
-			"Should only contain `alg` and `kid`")
+			"Should contain at most `alg`, `kid`, `typ` and `x5t`")
 	}
 
 	_, algExists := jsonObject["alg"]
 	_, kidExists := jsonObject["kid"]
+	_, typExists := jsonObject["typ"]
 
 	if algExists == false {
 		return false, fmt.Errorf("the tokens header must contain an 'alg'")
@@ -302,6 +289,14 @@ func (j *JwtVerifier) isValidJwt(jwt string) (bool, error) {
 
 	if kidExists == false {
 		return false, fmt.Errorf("the tokens header must contain a 'kid'")
+	}
+
+	if typExists == false {
+		return false, fmt.Errorf("the tokens header must contain a 'typ'")
+	}
+
+	if jsonObject["typ"] != "JWT" {
+		return false, fmt.Errorf("the only supported token type is JWT")
 	}
 
 	if jsonObject["alg"] != "RS256" {
